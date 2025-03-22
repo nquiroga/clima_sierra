@@ -1,1 +1,2 @@
 openmeteo_requests
+requests_cache
