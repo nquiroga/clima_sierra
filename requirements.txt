@@ -1,3 +1,4 @@
 openmeteo_requests
 requests_cache
 matplotlib
+retry_requests
