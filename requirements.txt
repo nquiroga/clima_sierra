@@ -1,11 +1,6 @@
 # Versión ultra-compatible para Streamlit Cloud
-streamlit
-pandas<2.1.0
-numpy<1.25.0
 plotly
 matplotlib
-requests
 openmeteo-requests
-requests-cache
 retry-requests
 pytz
