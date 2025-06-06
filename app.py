@@ -529,24 +529,44 @@ try:
             try:
                 stats_comparison = []
                 
+                def safe_round(value, decimals=1):
+                    """Función auxiliar para manejar NaN y valores nulos"""
+                    if pd.isna(value) or value is None:
+                        return "N/A"
+                    try:
+                        return round(float(value), decimals)
+                    except (ValueError, TypeError):
+                        return "N/A"
+                
                 for modelo in [modelo_seleccionado] + modelos_comparacion:
                     df_temp, df_d_temp, _, success_temp, _ = obtener_datos_clima(modelo)
                     if success_temp and df_temp is not None:
+                        # Calcular estadísticas con manejo seguro de NaN
+                        temp_mean = df_temp['temperatura_c'].mean()
+                        temp_max = df_temp['temperatura_c'].max()
+                        temp_min = df_temp['temperatura_c'].min()
+                        lluvia_sum = df_temp['lluvia_mm'].sum()
+                        viento_mean = df_temp['viento_kmh'].mean()
+                        
                         stats_comparison.append({
                             'Modelo': MODELOS_DISPONIBLES[modelo]["nombre"],
-                            'Temp. Promedio (°C)': df_temp['temperatura_c'].mean().round(1),
-                            'Temp. Máx. (°C)': df_temp['temperatura_c'].max().round(1),
-                            'Temp. Mín. (°C)': df_temp['temperatura_c'].min().round(1),
-                            'Lluvia Total (mm)': df_temp['lluvia_mm'].sum().round(1),
-                            'Viento Promedio (km/h)': df_temp['viento_kmh'].mean().round(1)
+                            'Temp. Promedio (°C)': safe_round(temp_mean),
+                            'Temp. Máx. (°C)': safe_round(temp_max),
+                            'Temp. Mín. (°C)': safe_round(temp_min),
+                            'Lluvia Total (mm)': safe_round(lluvia_sum),
+                            'Viento Promedio (km/h)': safe_round(viento_mean)
                         })
                 
                 if stats_comparison:
                     df_stats = pd.DataFrame(stats_comparison)
                     st.dataframe(df_stats, use_container_width=True)
+                else:
+                    st.warning("No se pudieron obtener datos de los modelos seleccionados.")
                     
             except Exception as e:
                 st.warning(f"No se pudo generar la tabla comparativa: {e}")
+                st.error("Detalles del error para debugging:")
+                st.code(str(e))
     
     # Información adicional en el sidebar
     st.sidebar.markdown("---")
