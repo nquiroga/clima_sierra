@@ -1,5 +1,25 @@
-openmeteo_requests
-requests_cache
-matplotlib
-retry_requests
-plotly
+# Aplicación del Clima - Sierra de los Padres
+# Dependencias principales
+
+# Framework web
+streamlit>=1.28.0
+
+# API meteorológica y manejo de requests
+openmeteo-requests>=1.1.0
+requests-cache>=1.1.0
+retry-requests>=2.0.0
+
+# Análisis de datos
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualización
+matplotlib>=3.7.0
+plotly>=5.15.0
+
+# Dependencias adicionales que pueden ser útiles
+requests>=2.31.0
+urllib3>=2.0.0
+
+# Para mejor manejo de fechas y zonas horarias
+pytz>=2023.3
