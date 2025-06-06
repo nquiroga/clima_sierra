@@ -3,5 +3,5 @@ plotly
 matplotlib
 openmeteo-requests
 retry-requests
-request-cache
+requests-cache
 pytz
