@@ -1,31 +1,11 @@
-# Aplicación del Clima - Sierra de los Padres
-# Dependencias principales con versiones fijas para compatibilidad
-
-# Framework web
-streamlit==1.28.1
-
-# Manejo de requests (versiones compatibles fijas)
-requests==2.31.0
-urllib3==1.26.18
-certifi==2023.7.22
-
-# API meteorológica y manejo de requests
-openmeteo-requests==1.1.0
-requests-cache==1.1.1
-retry-requests==2.0.0
-
-# Análisis de datos
-pandas==2.0.3
-numpy==1.24.3
-
-# Visualización
-matplotlib==3.7.2
-plotly==5.15.0
-
-# Para mejor manejo de fechas y zonas horarias
-pytz==2023.3
-
-# Dependencias adicionales para evitar conflictos
-charset-normalizer==3.2.0
-idna==3.4
-
+# Versión ultra-compatible para Streamlit Cloud
+streamlit
+pandas<2.1.0
+numpy<1.25.0
+plotly
+matplotlib
+requests
+openmeteo-requests
+requests-cache
+retry-requests
+pytz
