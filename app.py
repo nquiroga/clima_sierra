@@ -73,6 +73,48 @@ MODELOS_DISPONIBLES = {
     }
 }
 
+# Funciones auxiliares para manejo seguro de datos
+def safe_numeric_comparison(value, threshold, operation='greater'):
+    """Función auxiliar para comparaciones numéricas seguras"""
+    try:
+        if pd.isna(value) or value is None:
+            return False
+        if operation == 'greater':
+            return float(value) > threshold
+        elif operation == 'less':
+            return float(value) < threshold
+        elif operation == 'equal':
+            return float(value) == threshold
+        else:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+def safe_round(value, decimals=1):
+    """Función auxiliar para redondeo seguro"""
+    try:
+        if pd.isna(value) or value is None:
+            return "N/A"
+        return round(float(value), decimals)
+    except (ValueError, TypeError):
+        return "N/A"
+
+def clean_dataframe(df):
+    """Limpia el DataFrame eliminando valores infinitos y reemplazando NaN"""
+    df_clean = df.copy()
+    # Reemplazar infinitos con NaN
+    df_clean = df_clean.replace([np.inf, -np.inf], np.nan)
+    # Rellenar valores NaN con valores apropiados
+    numeric_columns = df_clean.select_dtypes(include=[np.number]).columns
+    for col in numeric_columns:
+        if col in ['temperatura_c']:
+            df_clean[col] = df_clean[col].fillna(df_clean[col].median())
+        elif col in ['lluvia_mm']:
+            df_clean[col] = df_clean[col].fillna(0)
+        elif col in ['viento_kmh', 'direccion_viento', 'presion_hpa', 'humedad']:
+            df_clean[col] = df_clean[col].fillna(df_clean[col].median())
+    return df_clean
+
 # Sidebar para selección de opciones
 st.sidebar.header("⚙️ Configuración")
 
@@ -112,28 +154,28 @@ if comparar_modelos:
 # Función para obtener datos meteorológicos con modelo específico
 @st.cache_data(ttl=3600)  # Almacenar en caché los datos durante 1 hora
 def obtener_datos_clima(modelo="best_match"):
-    # Configurar el cliente API de Open-Meteo con caché y reintento en caso de error
-    cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
-    retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
-    openmeteo = openmeteo_requests.Client(session=retry_session)
-
-    # Coordenadas de Sierra de los Padres, Buenos Aires, Argentina
-    latitude = -37.9527
-    longitude = -57.7716
-
-    # URL y parámetros para la API
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": latitude,
-        "longitude": longitude,
-        "hourly": ["temperature_2m", "rain", "windspeed_10m", "winddirection_10m", "pressure_msl", "relativehumidity_2m"],
-        "daily": ["temperature_2m_max", "temperature_2m_min", "rain_sum", "windspeed_10m_max"],
-        "timezone": "America/Argentina/Buenos_Aires",
-        "forecast_days": 7,  # Pronóstico de 7 días
-        "models": [modelo],
-    }
-
     try:
+        # Configurar el cliente API de Open-Meteo con caché y reintento en caso de error
+        cache_session = requests_cache.CachedSession('.cache', expire_after=3600)
+        retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
+        openmeteo = openmeteo_requests.Client(session=retry_session)
+
+        # Coordenadas de Sierra de los Padres, Buenos Aires, Argentina
+        latitude = -37.9527
+        longitude = -57.7716
+
+        # URL y parámetros para la API
+        url = "https://api.open-meteo.com/v1/forecast"
+        params = {
+            "latitude": latitude,
+            "longitude": longitude,
+            "hourly": ["temperature_2m", "rain", "windspeed_10m", "winddirection_10m", "pressure_msl", "relativehumidity_2m"],
+            "daily": ["temperature_2m_max", "temperature_2m_min", "rain_sum", "windspeed_10m_max"],
+            "timezone": "America/Argentina/Buenos_Aires",
+            "forecast_days": 7,  # Pronóstico de 7 días
+            "models": [modelo],
+        }
+
         responses = openmeteo.weather_api(url, params=params)
         response = responses[0]
         
@@ -158,8 +200,9 @@ def obtener_datos_clima(modelo="best_match"):
             "humedad": hourly.Variables(5).ValuesAsNumpy()
         }
 
-        # Crear DataFrame por hora
+        # Crear DataFrame por hora y limpiarlo
         df_hourly = pd.DataFrame(data=hourly_data)
+        df_hourly = clean_dataframe(df_hourly)
 
         # Procesar datos diarios
         daily = response.Daily()
@@ -180,15 +223,16 @@ def obtener_datos_clima(modelo="best_match"):
             "viento_max": daily.Variables(3).ValuesAsNumpy()
         }
 
-        # Crear DataFrame diario
+        # Crear DataFrame diario y limpiarlo
         df_daily = pd.DataFrame(data=daily_data)
+        df_daily = clean_dataframe(df_daily)
         
         return df_hourly, df_daily, response, True, None
         
     except Exception as e:
         return None, None, None, False, str(e)
 
-# Función para comparar modelos
+# Función para comparar modelos con manejo seguro de NaN
 def crear_comparacion_modelos(modelos_lista, variable="temperatura_c", titulo="Comparación de Temperatura"):
     fig = go.Figure()
     
@@ -201,14 +245,18 @@ def crear_comparacion_modelos(modelos_lista, variable="temperatura_c", titulo="C
             # Filtrar datos cada 6 horas para evitar sobrecarga
             df_filtered = df_hourly[df_hourly['fecha_hora'].dt.hour % 6 == 0].copy()
             
-            fig.add_trace(go.Scatter(
-                x=df_filtered['fecha_hora'],
-                y=df_filtered[variable],
-                mode='lines+markers',
-                name=MODELOS_DISPONIBLES[modelo]["nombre"],
-                line=dict(color=colores[i % len(colores)], width=2),
-                marker=dict(size=6)
-            ))
+            # Eliminar filas con valores NaN para la variable seleccionada
+            df_filtered = df_filtered.dropna(subset=[variable])
+            
+            if not df_filtered.empty:
+                fig.add_trace(go.Scatter(
+                    x=df_filtered['fecha_hora'],
+                    y=df_filtered[variable],
+                    mode='lines+markers',
+                    name=MODELOS_DISPONIBLES[modelo]["nombre"],
+                    line=dict(color=colores[i % len(colores)], width=2),
+                    marker=dict(size=6)
+                ))
     
     fig.update_layout(
         title=titulo,
@@ -220,7 +268,7 @@ def crear_comparacion_modelos(modelos_lista, variable="temperatura_c", titulo="C
     
     return fig
 
-# Función para crear tablas pivote para visualización
+# Función para crear tablas pivote para visualización con manejo de NaN
 def crear_tablas_pivote(df_hourly):
     # Crear una tabla pivote para facilitar la visualización
     df_pivot = df_hourly.copy()
@@ -247,13 +295,16 @@ def crear_tablas_pivote(df_hourly):
     
     return tabla_temp, tabla_lluvia, tabla_viento
 
-# Función para crear mapa de calor de temperatura
+# Función para crear mapa de calor de temperatura con manejo de NaN
 def crear_mapa_temperatura(tabla_temp):
+    # Rellenar NaN con valores interpolados para mejor visualización
+    tabla_temp_clean = tabla_temp.interpolate(method='linear', axis=0).interpolate(method='linear', axis=1)
+    
     fig = px.imshow(
-        tabla_temp,
+        tabla_temp_clean,
         labels=dict(x="Fecha", y="Hora", color="Temperatura (°C)"),
-        x=tabla_temp.columns,
-        y=tabla_temp.index,
+        x=tabla_temp_clean.columns,
+        y=tabla_temp_clean.index,
         color_continuous_scale=[
             (0, "darkblue"),    # Frío
             (0.2, "blue"),      # Fresco
@@ -266,14 +317,15 @@ def crear_mapa_temperatura(tabla_temp):
         title="Pronóstico de Temperatura (°C)"
     )
     
-    # Añadir anotaciones de texto
+    # Añadir anotaciones de texto con manejo seguro
     for i in range(len(tabla_temp.index)):
         for j in range(len(tabla_temp.columns)):
-            if not np.isnan(tabla_temp.iloc[i, j]):
+            value = tabla_temp.iloc[i, j]
+            if pd.notna(value):  # Solo agregar anotación si el valor no es NaN
                 fig.add_annotation(
                     x=tabla_temp.columns[j],
                     y=tabla_temp.index[i],
-                    text=str(tabla_temp.iloc[i, j]),
+                    text=str(round(value, 1)),
                     showarrow=False,
                     font=dict(color="black", size=10)
                 )
@@ -281,10 +333,13 @@ def crear_mapa_temperatura(tabla_temp):
     fig.update_layout(height=500)
     return fig
 
-# Función para crear mapa de calor de lluvia
+# Función para crear mapa de calor de lluvia con manejo de NaN
 def crear_mapa_lluvia(tabla_lluvia):
-    # Reemplazar ceros con NaN para mejor visualización
+    # Crear una copia para visualización
     tabla_lluvia_viz = tabla_lluvia.copy()
+    # Reemplazar NaN con 0 para lluvia
+    tabla_lluvia_viz = tabla_lluvia_viz.fillna(0)
+    # Reemplazar ceros con NaN para mejor visualización
     tabla_lluvia_viz = tabla_lluvia_viz.replace(0, np.nan)
     
     fig = px.imshow(
@@ -303,65 +358,71 @@ def crear_mapa_lluvia(tabla_lluvia):
         title="Pronóstico de Lluvia (mm)"
     )
     
-    # Añadir anotaciones de texto
+    # Añadir anotaciones de texto con manejo seguro
     for i in range(len(tabla_lluvia.index)):
         for j in range(len(tabla_lluvia.columns)):
-            if not np.isnan(tabla_lluvia.iloc[i, j]) and tabla_lluvia.iloc[i, j] > 0:
+            value = tabla_lluvia.iloc[i, j]
+            if pd.notna(value) and safe_numeric_comparison(value, 0, 'greater'):
                 fig.add_annotation(
                     x=tabla_lluvia.columns[j],
                     y=tabla_lluvia.index[i],
-                    text=str(tabla_lluvia.iloc[i, j]),
+                    text=str(round(value, 1)),
                     showarrow=False,
-                    font=dict(color="white" if tabla_lluvia.iloc[i, j] > 2 else "black", size=10)
+                    font=dict(color="white" if safe_numeric_comparison(value, 2, 'greater') else "black", size=10)
                 )
     
     fig.update_layout(height=500)
     return fig
 
-# Función para crear resumen diario mejorado
+# Función para crear resumen diario mejorado con manejo de NaN
 def crear_resumen_diario(df_daily):
     fig = go.Figure()
     
-    # Añadir barras de rango de temperatura
-    fig.add_trace(go.Bar(
-        x=df_daily['fecha'].dt.date,
-        y=df_daily['temp_max'] - df_daily['temp_min'],
-        base=df_daily['temp_min'],
-        name='Rango de Temperatura',
-        marker_color='orange',
-        opacity=0.7
-    ))
+    # Filtrar filas válidas
+    df_daily_clean = df_daily.dropna(subset=['temp_max', 'temp_min'])
     
-    # Añadir puntos de temperatura mínima
-    fig.add_trace(go.Scatter(
-        x=df_daily['fecha'].dt.date,
-        y=df_daily['temp_min'],
-        mode='markers+lines',
-        name='Temp. Mínima',
-        marker=dict(color='blue', size=10),
-        line=dict(color='blue', width=2)
-    ))
-    
-    # Añadir puntos de temperatura máxima
-    fig.add_trace(go.Scatter(
-        x=df_daily['fecha'].dt.date,
-        y=df_daily['temp_max'],
-        mode='markers+lines',
-        name='Temp. Máxima',
-        marker=dict(color='red', size=10),
-        line=dict(color='red', width=2)
-    ))
-    
-    # Añadir anotaciones de lluvia como texto
-    for i, row in df_daily.iterrows():
-        if row['lluvia_total'] > 0:
-            fig.add_annotation(
-                x=row['fecha'].date(),
-                y=row['temp_max'] + 2,
-                text=f"💧 {row['lluvia_total']:.1f} mm",
-                showarrow=False,
-                font=dict(color="blue", size=11, family="Arial Black")
-            )
+    if not df_daily_clean.empty:
+        # Añadir barras de rango de temperatura
+        fig.add_trace(go.Bar(
+            x=df_daily_clean['fecha'].dt.date,
+            y=df_daily_clean['temp_max'] - df_daily_clean['temp_min'],
+            base=df_daily_clean['temp_min'],
+            name='Rango de Temperatura',
+            marker_color='orange',
+            opacity=0.7
+        ))
+        
+        # Añadir puntos de temperatura mínima
+        fig.add_trace(go.Scatter(
+            x=df_daily_clean['fecha'].dt.date,
+            y=df_daily_clean['temp_min'],
+            mode='markers+lines',
+            name='Temp. Mínima',
+            marker=dict(color='blue', size=10),
+            line=dict(color='blue', width=2)
+        ))
+        
+        # Añadir puntos de temperatura máxima
+        fig.add_trace(go.Scatter(
+            x=df_daily_clean['fecha'].dt.date,
+            y=df_daily_clean['temp_max'],
+            mode='markers+lines',
+            name='Temp. Máxima',
+            marker=dict(color='red', size=10),
+            line=dict(color='red', width=2)
+        ))
+        
+        # Añadir anotaciones de lluvia como texto con manejo seguro
+        for i, row in df_daily_clean.iterrows():
+            lluvia_value = row['lluvia_total']
+            if pd.notna(lluvia_value) and safe_numeric_comparison(lluvia_value, 0, 'greater'):
+                fig.add_annotation(
+                    x=row['fecha'].date(),
+                    y=row['temp_max'] + 2,
+                    text=f"💧 {safe_round(lluvia_value, 1)} mm",
+                    showarrow=False,
+                    font=dict(color="blue", size=11, family="Arial Black")
+                )
     
     fig.update_layout(
         title="Rango de Temperatura Diaria y Lluvia",
@@ -386,6 +447,11 @@ try:
     
     if not success:
         st.error(f"Error al obtener datos del modelo {modelo_seleccionado}: {error}")
+        st.stop()
+    
+    # Verificar que los datos no estén vacíosc
+    if df_hourly is None or df_hourly.empty:
+        st.error("No se pudieron obtener datos válidos del modelo seleccionado.")
         st.stop()
     
     # Mostrar información de ubicación
@@ -427,19 +493,25 @@ try:
         # Mostrar tabla de lluvia
         st.subheader("Tabla de Lluvia (mm)")
         def color_lluvia(val):
-            color = 'white'
-            if pd.notnull(val) and val > 0:
-                if val <= 0.5:
+            if pd.isna(val):
+                return 'background-color: white'
+            try:
+                val_float = float(val)
+                if val_float <= 0:
+                    color = 'white'
+                elif val_float <= 0.5:
                     color = 'lightblue'
-                elif val <= 2:
+                elif val_float <= 2:
                     color = 'skyblue'
-                elif val <= 5:
+                elif val_float <= 5:
                     color = 'deepskyblue'
-                elif val <= 10:
+                elif val_float <= 10:
                     color = 'royalblue'
                 else:
                     color = 'navy'
-            return f'background-color: {color}'
+                return f'background-color: {color}'
+            except (ValueError, TypeError):
+                return 'background-color: white'
         
         st.dataframe(tabla_lluvia.style.applymap(color_lluvia), use_container_width=True)
         
@@ -447,8 +519,8 @@ try:
         st.subheader("Totales Diarios de Lluvia (mm)")
         lluvia_diaria = pd.DataFrame({
             'Fecha': df_daily['fecha'].dt.date,
-            'Lluvia Total (mm)': df_daily['lluvia_total'],
-            'Viento Máximo (km/h)': df_daily['viento_max']
+            'Lluvia Total (mm)': df_daily['lluvia_total'].apply(lambda x: safe_round(x, 1)),
+            'Viento Máximo (km/h)': df_daily['viento_max'].apply(lambda x: safe_round(x, 1))
         })
         st.dataframe(lluvia_diaria, use_container_width=True)
     
@@ -457,25 +529,29 @@ try:
         
         # Crear gráfico de velocidad del viento
         df_wind_filtered = df_hourly[df_hourly['fecha_hora'].dt.hour % 3 == 0].copy()
+        df_wind_filtered = df_wind_filtered.dropna(subset=['viento_kmh'])
         
-        fig_wind = go.Figure()
-        fig_wind.add_trace(go.Scatter(
-            x=df_wind_filtered['fecha_hora'],
-            y=df_wind_filtered['viento_kmh'],
-            mode='lines+markers',
-            name='Velocidad del Viento',
-            line=dict(color='green', width=2),
-            marker=dict(size=6, color='darkgreen')
-        ))
-        
-        fig_wind.update_layout(
-            title="Velocidad del Viento a lo largo del tiempo",
-            xaxis_title="Fecha y Hora",
-            yaxis_title="Velocidad del Viento (km/h)",
-            height=400
-        )
-        
-        st.plotly_chart(fig_wind, use_container_width=True)
+        if not df_wind_filtered.empty:
+            fig_wind = go.Figure()
+            fig_wind.add_trace(go.Scatter(
+                x=df_wind_filtered['fecha_hora'],
+                y=df_wind_filtered['viento_kmh'],
+                mode='lines+markers',
+                name='Velocidad del Viento',
+                line=dict(color='green', width=2),
+                marker=dict(size=6, color='darkgreen')
+            ))
+            
+            fig_wind.update_layout(
+                title="Velocidad del Viento a lo largo del tiempo",
+                xaxis_title="Fecha y Hora",
+                yaxis_title="Velocidad del Viento (km/h)",
+                height=400
+            )
+            
+            st.plotly_chart(fig_wind, use_container_width=True)
+        else:
+            st.warning("No hay datos de viento disponibles para mostrar.")
     
     with tab4:
         st.subheader("Resumen Meteorológico Diario")
@@ -485,11 +561,11 @@ try:
         st.subheader("Tabla de Resumen Diario")
         resumen_diario = pd.DataFrame({
             'Fecha': df_daily['fecha'].dt.date,
-            'Temp. Mín. (°C)': df_daily['temp_min'].round(1),
-            'Temp. Máx. (°C)': df_daily['temp_max'].round(1),
-            'Rango Temp. (°C)': (df_daily['temp_max'] - df_daily['temp_min']).round(1),
-            'Lluvia Total (mm)': df_daily['lluvia_total'].round(1),
-            'Viento Máx. (km/h)': df_daily['viento_max'].round(1)
+            'Temp. Mín. (°C)': df_daily['temp_min'].apply(lambda x: safe_round(x, 1)),
+            'Temp. Máx. (°C)': df_daily['temp_max'].apply(lambda x: safe_round(x, 1)),
+            'Rango Temp. (°C)': (df_daily['temp_max'] - df_daily['temp_min']).apply(lambda x: safe_round(x, 1)),
+            'Lluvia Total (mm)': df_daily['lluvia_total'].apply(lambda x: safe_round(x, 1)),
+            'Viento Máx. (km/h)': df_daily['viento_max'].apply(lambda x: safe_round(x, 1))
         })
         st.dataframe(resumen_diario, use_container_width=True)
     
@@ -529,18 +605,9 @@ try:
             try:
                 stats_comparison = []
                 
-                def safe_round(value, decimals=1):
-                    """Función auxiliar para manejar NaN y valores nulos"""
-                    if pd.isna(value) or value is None:
-                        return "N/A"
-                    try:
-                        return round(float(value), decimals)
-                    except (ValueError, TypeError):
-                        return "N/A"
-                
                 for modelo in [modelo_seleccionado] + modelos_comparacion:
                     df_temp, df_d_temp, _, success_temp, _ = obtener_datos_clima(modelo)
-                    if success_temp and df_temp is not None:
+                    if success_temp and df_temp is not None and not df_temp.empty:
                         # Calcular estadísticas con manejo seguro de NaN
                         temp_mean = df_temp['temperatura_c'].mean()
                         temp_max = df_temp['temperatura_c'].max()
@@ -565,19 +632,17 @@ try:
                     
             except Exception as e:
                 st.warning(f"No se pudo generar la tabla comparativa: {e}")
-                st.error("Detalles del error para debugging:")
-                st.code(str(e))
     
     # Información adicional en el sidebar
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Datos Adicionales")
     
-    # Mostrar promedios del modelo actual
-    if df_hourly is not None:
-        st.sidebar.metric("🌡️ Temp. Promedio", f"{df_hourly['temperatura_c'].mean():.1f}°C")
-        st.sidebar.metric("🌧️ Lluvia Total", f"{df_hourly['lluvia_mm'].sum():.1f} mm")
-        st.sidebar.metric("💨 Viento Promedio", f"{df_hourly['viento_kmh'].mean():.1f} km/h")
-        st.sidebar.metric("💧 Humedad Promedio", f"{df_hourly['humedad'].mean():.0f}%")
+    # Mostrar promedios del modelo actual con manejo seguro
+    if df_hourly is not None and not df_hourly.empty:
+        st.sidebar.metric("🌡️ Temp. Promedio", f"{safe_round(df_hourly['temperatura_c'].mean())}°C")
+        st.sidebar.metric("🌧️ Lluvia Total", f"{safe_round(df_hourly['lluvia_mm'].sum())} mm")
+        st.sidebar.metric("💨 Viento Promedio", f"{safe_round(df_hourly['viento_kmh'].mean())} km/h")
+        st.sidebar.metric("💧 Humedad Promedio", f"{safe_round(df_hourly['humedad'].mean(), 0)}%")
     
     # Añadir botón de actualización y hora de última actualización
     st.markdown("---")
@@ -606,3 +671,6 @@ except Exception as e:
     st.error(f"❌ Ocurrió un error: {e}")
     st.error("Por favor, intente actualizar la página o verifique su conexión a internet.")
     st.info("💡 **Sugerencia:** Prueba seleccionando un modelo diferente en la barra lateral.")
+    
+    # Mostrar más detalles del error para debugging
+    st.expander("Detalles del error (para debugging)").code(str(e))
