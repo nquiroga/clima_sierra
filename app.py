@@ -90,12 +90,12 @@ def safe_numeric_comparison(value, threshold, operation='greater'):
     except (ValueError, TypeError):
         return False
 
-def safe_round(value, decimals=1):
-    """Función auxiliar para redondeo seguro"""
+def format_metric_value(value, unit="", decimals=1):
+    """Función para formatear valores de métricas de manera segura"""
     try:
         if pd.isna(value) or value is None:
             return "N/A"
-        return round(float(value), decimals)
+        return f"{round(float(value), decimals)}{unit}"
     except (ValueError, TypeError):
         return "N/A"
 
@@ -513,7 +513,7 @@ try:
             except (ValueError, TypeError):
                 return 'background-color: white'
         
-        st.dataframe(tabla_lluvia.style.applymap(color_lluvia), use_container_width=True)
+        st.dataframe(tabla_lluvia.style.map(color_lluvia), use_container_width=True)
         
         # Mostrar totales diarios de lluvia
         st.subheader("Totales Diarios de Lluvia (mm)")
