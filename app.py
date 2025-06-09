@@ -90,12 +90,12 @@ def safe_numeric_comparison(value, threshold, operation='greater'):
     except (ValueError, TypeError):
         return False
 
-def format_metric_value(value, unit="", decimals=1):
-    """Función para formatear valores de métricas de manera segura"""
+def safe_round_for_display(value, decimals=1):
+    """Función auxiliar para redondeo seguro solo para display"""
     try:
         if pd.isna(value) or value is None:
             return "N/A"
-        return f"{round(float(value), decimals)}{unit}"
+        return f"{round(float(value), decimals)}"
     except (ValueError, TypeError):
         return "N/A"
 
@@ -104,15 +104,14 @@ def clean_dataframe(df):
     df_clean = df.copy()
     # Reemplazar infinitos con NaN
     df_clean = df_clean.replace([np.inf, -np.inf], np.nan)
-    # Rellenar valores NaN con valores apropiados
-    numeric_columns = df_clean.select_dtypes(include=[np.number]).columns
-    for col in numeric_columns:
-        if col in ['temperatura_c']:
-            df_clean[col] = df_clean[col].fillna(df_clean[col].median())
-        elif col in ['lluvia_mm']:
+    # Rellenar valores NaN con valores apropiados usando métodos modernos
+    for col in df_clean.columns:
+        if col == 'temperatura_c':
+            df_clean[col] = df_clean[col].ffill().bfill()
+        elif col == 'lluvia_mm':
             df_clean[col] = df_clean[col].fillna(0)
         elif col in ['viento_kmh', 'direccion_viento', 'presion_hpa', 'humedad']:
-            df_clean[col] = df_clean[col].fillna(df_clean[col].median())
+            df_clean[col] = df_clean[col].ffill().bfill()
     return df_clean
 
 # Sidebar para selección de opciones
@@ -144,10 +143,21 @@ comparar_modelos = st.sidebar.checkbox(
 
 modelos_comparacion = []
 if comparar_modelos:
+    # Obtener opciones disponibles (excluyendo el modelo seleccionado)
+    opciones_disponibles = [k for k in MODELOS_DISPONIBLES.keys() if k != modelo_seleccionado]
+    
+    # Determinar valores por defecto que estén en las opciones disponibles
+    if modelo_seleccionado == "ecmwf_ifs04":
+        default_values = [x for x in ["gfs_seamless", "icon_seamless"] if x in opciones_disponibles]
+    elif modelo_seleccionado == "gfs_seamless":
+        default_values = [x for x in ["ecmwf_ifs04", "icon_seamless"] if x in opciones_disponibles]
+    else:
+        default_values = [x for x in ["ecmwf_ifs04", "gfs_seamless"] if x in opciones_disponibles]
+    
     modelos_comparacion = st.sidebar.multiselect(
         "Modelos para comparar:",
-        options=[k for k in MODELOS_DISPONIBLES.keys() if k != modelo_seleccionado],
-        default=["ecmwf_ifs04", "gfs_seamless"] if modelo_seleccionado != "ecmwf_ifs04" else ["gfs_seamless", "icon_seamless"],
+        options=opciones_disponibles,
+        default=default_values[:2],  # Máximo 2 valores por defecto
         format_func=lambda x: MODELOS_DISPONIBLES[x]["nombre"]
     )
 
@@ -419,7 +429,7 @@ def crear_resumen_diario(df_daily):
                 fig.add_annotation(
                     x=row['fecha'].date(),
                     y=row['temp_max'] + 2,
-                    text=f"💧 {safe_round(lluvia_value, 1)} mm",
+                    text=f"💧 {round(lluvia_value, 1)} mm",
                     showarrow=False,
                     font=dict(color="blue", size=11, family="Arial Black")
                 )
@@ -519,8 +529,8 @@ try:
         st.subheader("Totales Diarios de Lluvia (mm)")
         lluvia_diaria = pd.DataFrame({
             'Fecha': df_daily['fecha'].dt.date,
-            'Lluvia Total (mm)': df_daily['lluvia_total'].apply(lambda x: safe_round(x, 1)),
-            'Viento Máximo (km/h)': df_daily['viento_max'].apply(lambda x: safe_round(x, 1))
+            'Lluvia Total (mm)': df_daily['lluvia_total'].round(1),
+            'Viento Máximo (km/h)': df_daily['viento_max'].round(1)
         })
         st.dataframe(lluvia_diaria, use_container_width=True)
     
@@ -561,11 +571,11 @@ try:
         st.subheader("Tabla de Resumen Diario")
         resumen_diario = pd.DataFrame({
             'Fecha': df_daily['fecha'].dt.date,
-            'Temp. Mín. (°C)': df_daily['temp_min'].apply(lambda x: safe_round(x, 1)),
-            'Temp. Máx. (°C)': df_daily['temp_max'].apply(lambda x: safe_round(x, 1)),
-            'Rango Temp. (°C)': (df_daily['temp_max'] - df_daily['temp_min']).apply(lambda x: safe_round(x, 1)),
-            'Lluvia Total (mm)': df_daily['lluvia_total'].apply(lambda x: safe_round(x, 1)),
-            'Viento Máx. (km/h)': df_daily['viento_max'].apply(lambda x: safe_round(x, 1))
+            'Temp. Mín. (°C)': df_daily['temp_min'].round(1),
+            'Temp. Máx. (°C)': df_daily['temp_max'].round(1),
+            'Rango Temp. (°C)': (df_daily['temp_max'] - df_daily['temp_min']).round(1),
+            'Lluvia Total (mm)': df_daily['lluvia_total'].round(1),
+            'Viento Máx. (km/h)': df_daily['viento_max'].round(1)
         })
         st.dataframe(resumen_diario, use_container_width=True)
     
@@ -617,11 +627,11 @@ try:
                         
                         stats_comparison.append({
                             'Modelo': MODELOS_DISPONIBLES[modelo]["nombre"],
-                            'Temp. Promedio (°C)': safe_round(temp_mean),
-                            'Temp. Máx. (°C)': safe_round(temp_max),
-                            'Temp. Mín. (°C)': safe_round(temp_min),
-                            'Lluvia Total (mm)': safe_round(lluvia_sum),
-                            'Viento Promedio (km/h)': safe_round(viento_mean)
+                            'Temp. Promedio (°C)': round(temp_mean, 1) if pd.notna(temp_mean) else np.nan,
+                            'Temp. Máx. (°C)': round(temp_max, 1) if pd.notna(temp_max) else np.nan,
+                            'Temp. Mín. (°C)': round(temp_min, 1) if pd.notna(temp_min) else np.nan,
+                            'Lluvia Total (mm)': round(lluvia_sum, 1) if pd.notna(lluvia_sum) else np.nan,
+                            'Viento Promedio (km/h)': round(viento_mean, 1) if pd.notna(viento_mean) else np.nan
                         })
                 
                 if stats_comparison:
@@ -639,10 +649,10 @@ try:
     
     # Mostrar promedios del modelo actual con manejo seguro
     if df_hourly is not None and not df_hourly.empty:
-        st.sidebar.metric("🌡️ Temp. Promedio", f"{safe_round(df_hourly['temperatura_c'].mean())}°C")
-        st.sidebar.metric("🌧️ Lluvia Total", f"{safe_round(df_hourly['lluvia_mm'].sum())} mm")
-        st.sidebar.metric("💨 Viento Promedio", f"{safe_round(df_hourly['viento_kmh'].mean())} km/h")
-        st.sidebar.metric("💧 Humedad Promedio", f"{safe_round(df_hourly['humedad'].mean(), 0)}%")
+        st.sidebar.metric("🌡️ Temp. Promedio", f"{safe_round_for_display(df_hourly['temperatura_c'].mean())}°C")
+        st.sidebar.metric("🌧️ Lluvia Total", f"{safe_round_for_display(df_hourly['lluvia_mm'].sum())} mm")
+        st.sidebar.metric("💨 Viento Promedio", f"{safe_round_for_display(df_hourly['viento_kmh'].mean())} km/h")
+        st.sidebar.metric("💧 Humedad Promedio", f"{safe_round_for_display(df_hourly['humedad'].mean(), 0)}%")
     
     # Añadir botón de actualización y hora de última actualización
     st.markdown("---")
@@ -650,7 +660,7 @@ try:
     with col1:
         if st.button("🔄 Actualizar Datos"):
             st.cache_data.clear()
-            st.experimental_rerun()
+            st.rerun()
     with col2:
         st.write(f"**🕒 Última actualización:** {datetime.now().strftime('%d/%m/%Y %H:%M')}")
     with col3:
